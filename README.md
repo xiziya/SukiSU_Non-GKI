@@ -64,6 +64,16 @@ curl -LSs https://raw.githubusercontent.com/xiziya/SukiSU_Non-GKI/builtin/kernel
 
 `builtin` 是稳定兼容版；上游基线为上述 SukiSU Ultra `builtin` 提交。`dev` 从该基线派生，单独放置旧内核接口探测、SUSFS 2.3 适配以及 SU/SELinux 隐藏的实验优化。`dev` 的功能不自动回灌到 `builtin`，须经过对应内核编译和设备实测。同步记录见 `docs/upstream-sync-20261012.md`。
 
+当前 `dev` 的 4.9/4.14/4.19/5.4 分类仅用于提示和测试矩阵；真正选择 LSM 原型、链表类型、`kernel_read/write` 和 `close_fd` 兼容路径时读取目标源码接口，避免厂商回移植与版本号不符。无法识别的 `setprocattr` 原型会在构建前报错，不会猜测。启用 SUSFS 时会预检核心头文件和进程标志 API，并识别 v2.3.x；仍必须先应用与真实内核系列相符的补丁和 inline hooks。`dev` 的 SELinux hide 在关闭时少做一次热路径 UID 检查，启用失败时不再误报成功；未改动 Manager UAPI 或 5.10+ 原生实现。
+
+要手动集成实验分支，在内核源码根目录运行：
+
+```sh
+curl -LSs https://raw.githubusercontent.com/xiziya/SukiSU_Non-GKI/dev/kernel/setup.sh | KSU_BRANCH=dev sh
+```
+
+在 Actions 中选择 `dev` 分支运行工作流；该分支的中英文工作流均从同一 checkout 集成 `dev`，不会误用 `builtin`。验证矩阵和限制见 `docs/dev-compat-20261012.md`。上述措施是接口兼容与减少无效开销，**不保证**所有 Non-GKI 厂商树或设备端隐藏效果；尤其不能宣称“不泄露 SU 环境”已经实机验证。
+
 ### Zygisk Next 兼容性说明
 
 Zygisk Next 是用户空间模块，不由 KernelSU 内核驱动实现。上游识别依赖 `GET_INFO` 返回的 `KSU_VERSION`、UAPI 版本和功能位；本仓库保留了 SukiSU Ultra 的 UAPI 编号，并在离线/浅克隆时使用稳定的非零版本回退，避免管理器把内核误判为旧版或不支持。内核本身没有可安全添加的“Zygisk 已启用”位，因此“需要重启”提示不能通过伪造一个内核功能位解决；安装/升级 Zygisk Next 后按其模块说明重启一次是正常行为。若重启后仍显示该提示，应提供 Zygisk Next bugreport 及管理器版本，不能仅凭内核编译日志判断。
@@ -72,7 +82,7 @@ Zygisk Next 是用户空间模块，不由 KernelSU 内核驱动实现。上游�
 
 `.github/workflows/build-custom-kernel-Zh_CN.yml` 提供简体中文 `workflow_dispatch` 构建入口，`.github/workflows/build-custom-kernel-Eng.yml` 提供英文入口。两者使用完全相同的构建逻辑和输入参数，仅界面显示语言不同。必须填写设备 `codename` 和以 `.git` 结尾的纯净内核仓库；`kernel_branch` 默认 `bka`。`defconfig` 请输入目录下的 `*_defconfig` 路径，例如 `vendor/xiaomi/mi845_defconfig`，也可以留空让工作流按 codename 自动探测；只有唯一候选才会自动使用，多个候选会直接失败并列出候选。`device_config` 是可选的 `目录/*.config` 路径。
 
-工作流最前面提供可选的内核版本伪装开关。启用后必须填写 `主版本.次版本.子版本` 三段纯数字版本号，例如 `4.9.337`；工作流会自动解析并分别写入内核根 `Makefile` 的 `VERSION`、`PATCHLEVEL` 和 `SUBLEVEL`。伪装步骤严格位于 SukiSU、机型补丁以及 SUSFS/inline hook 集成之后，因此 SUSFS 补丁仍按源码真实版本选择。跨主版本或次版本伪装可能令后续编译选择不兼容的内核 API，工作流会输出警告，通常应只调整同一内核系列的子版本号。
+工作流提供可选的内核版本伪装开关。启用后必须填写 `主版本.次版本.子版本` 三段纯数字版本号，例如 `4.9.337`。伪装在集成步骤之后登记，并在构建配置阶段只覆盖最终 `KERNELRELEASE`；不会重写内核根 `Makefile` 的 `VERSION`、`PATCHLEVEL`、`SUBLEVEL`，因此编译期 API 分支与 SUSFS 补丁仍按源码真实系列选择。跨系列伪装仅改变对外报告的版本字符串，不能为旧内核提供新版 API。
 
 其余输入覆盖作者、A/B 分区、LTO、SUSFS + SukiSU 兼容版、内核名（空值为 `by_XiZi`）、构建时间、内核版本、DroidSpaces 和 AnyKernel3。可选的“固定 SELinux 为 Enforcing”默认关闭；启用后会保留 `CONFIG_SECURITY_SELINUX=y` 并禁用构建输出 `.config` 中的 `CONFIG_SECURITY_SELINUX_DEVELOP`，随后验证 Kconfig 没有覆盖该结果。工作流还会限定在 `sel_write_enforce()` 函数内识别 `new_value = 0` 这类源码级强制宽容修改，并恢复内核标准的 `new_value = !!new_value`；已是标准实现时不会改源码，无法识别时会停止构建而非盲目替换。这样既修复默认 permissive，也修复 `setenforce 1` 无效，并且不依赖 boot cmdline 的 `enforcing=1`。但 ROM sepolicy 不兼容时可能无法启动，因此不能替代依据 AVC 日志进行的精确 `.te` 策略修复。开关请求值、配置状态和源码修复状态都会写入构建报告。A/B 选项保留在报告中，但 AK3 刷入脚本会在设备端自动识别当前活动槽位，避免选项与实际设备状态不一致导致刷错 boot。主编译目标可选择 `Image.gz` 或 `Image.gz-dtb`；启用 AnyKernel3 时还可以独立选择打包目标，若目标不同于主编译目标，工作流会自动额外编译它。构建阶段会捕获存在的 `Image.gz`/`Image.gz-dtb` 并随产物上传，报告中记录捕获列表和 SHA-256 校验。对于同时包含 Qualcomm `qcacld-3.0`、`qca-wifi-host-cmn` 和 `fw-api` 的源码，工作流会强制保留 `CONFIG_QCA_CLD_WLAN=y`，将 WLAN 驱动直接链接进内核；AK3 不再携带或安装 `wlan.ko`。没有该完整布局的 MTK 或其他内核不会受到影响。构建身份会写入 `KBUILD_BUILD_USER`，自定义时间写入 `KBUILD_BUILD_TIMESTAMP`，内核 localversion 延续 `build.sh` 的 `-名称-版本-日期` 规则。启用 DroidSpaces 时，工作流会额外强制写入官方 Non-GKI 要求的 `CONFIG_USER_NS=y`，避免旧版配置片段遗漏该选项。构建报告会同时记录源码真实版本、版本伪装目标和伪装执行状态。
 

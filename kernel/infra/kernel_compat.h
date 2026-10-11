@@ -168,7 +168,7 @@ static inline long ksu_strncpy_from_user_nofault(char *dst, const void __user *u
     return ret;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0) && !defined(KSU_HAS_KERNEL_READ_POS)
 // https://elixir.bootlin.com/linux/v4.14.336/source/fs/read_write.c#L418
 static inline ssize_t ksu_kernel_read_compat(struct file *p, void *buf, size_t count, loff_t *pos)
 {
@@ -179,6 +179,10 @@ static inline ssize_t ksu_kernel_read_compat(struct file *p, void *buf, size_t c
     set_fs(old_fs);
     return result;
 }
+#define kernel_read ksu_kernel_read_compat
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0) && !defined(KSU_HAS_KERNEL_WRITE_POS)
 // https://elixir.bootlin.com/linux/v4.14.336/source/fs/read_write.c#L512
 static inline ssize_t ksu_kernel_write_compat(struct file *p, const void *buf, size_t count, loff_t *pos)
 {
@@ -189,9 +193,8 @@ static inline ssize_t ksu_kernel_write_compat(struct file *p, const void *buf, s
     set_fs(old_fs);
     return res;
 }
-#define kernel_read ksu_kernel_read_compat
 #define kernel_write ksu_kernel_write_compat
-#endif // < 4.14
+#endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 12, 0)
 static inline void *ksu_kvmalloc(size_t size, gfp_t flags)
@@ -225,7 +228,8 @@ static inline void ksu_kvfree(void *buf)
 #define close_fd sys_close
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0) && \
+    !defined(KSU_HAS_CLOSE_FD)
 #include <linux/fdtable.h>
 __weak int close_fd(unsigned fd)
 {

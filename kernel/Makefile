@@ -74,9 +74,24 @@ $(info -- KERNEL_TYPE: $(KERNEL_TYPE))
 ifeq ($(shell test $(VERSION) -lt 5 -o \( $(VERSION) -eq 5 -a $(PATCHLEVEL) -lt 10 \); echo $$?),0)
 obj-$(CONFIG_KSU) += non_gki/
 ccflags-y += -DKSU_NON_GKI
+ifneq ($(filter $(KERNEL_VERSION),4.9 4.14 4.19 5.4),)
+$(info -- Non-GKI compatibility series: $(KERNEL_VERSION) (vendor API probes enabled))
+else
+$(warning Non-GKI series $(KERNEL_VERSION) has no validated build matrix; checking source interfaces)
+endif
+KSU_COMPAT_PROBE_FLAGS := $(shell sh "$(KSU_KERNEL_DIR)/scripts/probe-compat.sh" "$(srctree)" || echo KSU_COMPAT_PROBE_FAILED)
+ifneq ($(filter KSU_COMPAT_PROBE_FAILED,$(KSU_COMPAT_PROBE_FLAGS)),)
+$(error Non-GKI API detection failed; fix the reported source interface instead of overriding the version)
+endif
+ccflags-y += $(KSU_COMPAT_PROBE_FLAGS)
 endif
 
 ifeq ($(CONFIG_KSU_SUSFS), y)
+KSU_SUSFS_ABI_VERSION := $(shell sh "$(KSU_KERNEL_DIR)/scripts/check-susfs-tree.sh" "$(srctree)" || echo KSU_SUSFS_ABI_FAILED)
+ifeq ($(KSU_SUSFS_ABI_VERSION),KSU_SUSFS_ABI_FAILED)
+$(error SUSFS source ABI check failed; apply the matching patch and inline hooks before building)
+endif
+$(info -- SUSFS core ABI: $(KSU_SUSFS_ABI_VERSION))
 $(info -- $(REPO_NAME): using SUSFS_INLINE_HOOK)
 else
 $(info -- $(REPO_NAME): using Unknown)
@@ -135,18 +150,6 @@ endif
 
 ifeq ($(shell grep -q "struct sidtab .sidtab" $(srctree)/security/selinux/ss/services.h; echo $$?),0)
 ccflags-y += -DKSU_COMPAT_SIDTAB_AS_REFERENCE
-endif
-
-ifeq ($(shell grep -q "hlist_head" $(srctree)/include/linux/lsm_hooks.h; echo $$?),0)
-ccflags-y += -DKSU_COMPAT_HLIST_FOR_SECURITY_HOOK_LIST
-endif
-
-ifeq ($(shell grep -F -q "int (*setprocattr)(const char *name, void *value, size_t size);" $(srctree)/include/linux/lsm_hooks.h; echo $$?),0)
-ccflags-y += -DKSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE
-endif
-
-ifeq ($(shell grep -F -q "char *lsm_names" $(srctree)/security/security.c; echo $$?),0)
-ccflags-y += -DKSU_COMPAT_REQUIRE_PROVIDE_LSM_NAME
 endif
 
 ifeq ($(shell grep -q "POLICYDB_CONFIG_ANDROID_NETLINK_ROUTE" $(srctree)/security/selinux/ss/policydb.h; echo $$?),0)

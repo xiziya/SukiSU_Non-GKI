@@ -12,7 +12,7 @@ void ksu_selinux_hide_handle_second_stage();
 void ksu_selinux_hide_handle_post_fs_data();
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0) || defined(KSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE)
+#ifdef KSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE
 typedef int (*setprocattr_fn)(const char *name, void *value, size_t size);
 int ksu_handle_selinux_setprocattr(const char *name, void *value, size_t size);
 #else

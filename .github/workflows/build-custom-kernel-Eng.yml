@@ -229,7 +229,7 @@ jobs:
         shell: bash
         run: |
           cd "$KERNEL_ROOT"
-          KSU_REPO="$GITHUB_WORKSPACE" KSU_BRANCH=builtin sh "$GITHUB_WORKSPACE/kernel/setup.sh"
+          KSU_REPO="$GITHUB_WORKSPACE" KSU_BRANCH=dev sh "$GITHUB_WORKSPACE/kernel/setup.sh"
 
       - name: Classify and process device-specific patches
         shell: bash

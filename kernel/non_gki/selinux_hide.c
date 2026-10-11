@@ -328,7 +328,7 @@ uintptr_t selinux_setprocattr_hook_ptr = 0;
 extern setprocattr_fn ksu_orig_setprocattr;
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0) || defined(KSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE)
+#ifdef KSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE
 int __nocfi ksu_handle_selinux_setprocattr(const char *name, void *value, size_t size)
 #else
 int __nocfi ksu_handle_selinux_setprocattr(struct task_struct *p, char *name, void *value, size_t size)
@@ -373,7 +373,7 @@ int __nocfi ksu_handle_selinux_setprocattr(struct task_struct *p, char *name, vo
 call_orig:
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
     return ((setprocattr_fn)selinux_setprocattr_hook.original)(name, value, size);
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0) || defined(KSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE)
+#elif defined(KSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE)
     return ksu_orig_setprocattr(name, value, size);
 #else
     return ksu_orig_setprocattr(p, name, value, size);
@@ -384,7 +384,7 @@ typedef int (*sel_open_handle_status_fn)(struct inode *inode, struct file *filp)
 static sel_open_handle_status_fn orig_sel_open_handle_status, *sel_open_handle_status_slot;
 static int my_sel_open_handle_status(struct inode *inode, struct file *filp)
 {
-    if (likely(ksu_get_uid_t(current_uid()) >= 10000 && ksu_selinux_hide_enabled)) {
+    if (unlikely(READ_ONCE(ksu_selinux_hide_enabled)) && ksu_get_uid_t(current_uid()) >= 10000) {
         void *data;
         mutex_lock(ksu_selinux_status_lock);
         data = fake_status;
@@ -612,7 +612,7 @@ static int ksu_selinux_hide_enable()
     struct security_hook_list *hp;
 
     // https://github.com/torvalds/linux/commit/df0ce17331e2501dbffc060041dfc6c5f85227b5
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0) || defined(KSU_COMPAT_HLIST_FOR_SECURITY_HOOK_LIST)
+#ifdef KSU_COMPAT_HLIST_FOR_SECURITY_HOOK_LIST
 #define ksu_for_each_lsm_entry hlist_for_each_entry
 #else
 #define ksu_for_each_lsm_entry list_for_each_entry
@@ -621,11 +621,11 @@ static int ksu_selinux_hide_enable()
     ksu_for_each_lsm_entry(hp, &security_hook_heads.setprocattr, list)
     {
         // https://github.com/torvalds/linux/commit/d69dece5f5b6bc7a5e39d2b6136ddc69469331fe
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0) || defined(KSU_COMPAT_REQUIRE_PROVIDE_LSM_NAME)
-        // when we are in 4.11+, we can ensure we are control "selinux" LSM by that
+#ifdef KSU_COMPAT_REQUIRE_PROVIDE_LSM_NAME
+        // Vendor trees can backport the name field independently of the version.
         if (strcmp("selinux", hp->lsm))
             continue;
-#endif // #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+#endif // KSU_COMPAT_REQUIRE_PROVIDE_LSM_NAME
         selinux_setprocattr_hook_ptr = (unsigned long)&hp->hook.setprocattr;
         ksu_orig_setprocattr = hp->hook.setprocattr;
         setprocattr_fn my_setprocattr = ksu_handle_selinux_setprocattr;
@@ -679,7 +679,7 @@ static void ksu_selinux_hide_disable()
 
 static int selinux_hide_feature_get(u64 *value)
 {
-    *value = ksu_selinux_hide_enabled ? 1 : 0;
+    *value = READ_ONCE(ksu_selinux_hide_enabled) ? 1 : 0;
     return 0;
 }
 
@@ -689,7 +689,6 @@ static int selinux_hide_feature_set(u64 value)
     int ret = 0;
     pr_info("selinux_hide: set to %d\n", enable);
     mutex_lock(&selinux_hide_mutex);
-    ksu_selinux_hide_enabled = enable;
     if (enable) {
         if (!ksu_selinux_hide_running) {
             ret = ksu_selinux_hide_enable();
@@ -703,6 +702,8 @@ static int selinux_hide_feature_set(u64 value)
             ksu_selinux_hide_running = false;
         }
     }
+    /* Report the feature as enabled only after its hooks are active. */
+    WRITE_ONCE(ksu_selinux_hide_enabled, enable && !ret);
     mutex_unlock(&selinux_hide_mutex);
     return ret;
 }
