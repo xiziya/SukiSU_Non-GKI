@@ -1,5 +1,5 @@
 diff --git a/kernel/Makefile b/kernel/Makefile
-index e71a0bb..e17d8c4 100644
+index e71a0bb..39921e6 100644
 --- a/kernel/Makefile
 +++ b/kernel/Makefile
 @@ -35,6 +35,7 @@ KSU_SRC := $(if $(wildcard $(KSU_SRC)/../.git),$(KSU_SRC),$(MDIR))
@@ -24,7 +24,7 @@ index e71a0bb..e17d8c4 100644
  VERSION_TAG     := $(or $(KSU_GITHUB_VER),$(git_latest_tag),4.2.0)
  KSU_VERSION_FULL := $(if $(call git_short_sha),v$(VERSION_TAG)-$(call git_short_sha)@$(call git_branch),v$(VERSION_TAG)-$(REPO_NAME)-unknown@unknown)
  $(info -- $(REPO_NAME) version: $(KSU_VERSION) [$(KSU_VERSION_FULL)])
-@@ -65,6 +69,13 @@ endif
+@@ -65,7 +69,29 @@ endif
  $(info -- KERNEL_VERSION: $(KERNEL_VERSION))
  $(info -- KERNEL_TYPE: $(KERNEL_TYPE))
  
@@ -33,12 +33,28 @@ index e71a0bb..e17d8c4 100644
 +ifeq ($(shell test $(VERSION) -lt 5 -o \( $(VERSION) -eq 5 -a $(PATCHLEVEL) -lt 10 \); echo $$?),0)
 +obj-$(CONFIG_KSU) += non_gki/
 +ccflags-y += -DKSU_NON_GKI
++ifneq ($(filter $(KERNEL_VERSION),4.9 4.14 4.19 5.4),)
++$(info -- Non-GKI compatibility series: $(KERNEL_VERSION) (vendor API probes enabled))
++else
++$(warning Non-GKI series $(KERNEL_VERSION) has no validated build matrix; checking source interfaces)
++endif
++KSU_COMPAT_PROBE_FLAGS := $(shell sh "$(KSU_KERNEL_DIR)/scripts/probe-compat.sh" "$(srctree)" || echo KSU_COMPAT_PROBE_FAILED)
++ifneq ($(filter KSU_COMPAT_PROBE_FAILED,$(KSU_COMPAT_PROBE_FLAGS)),)
++$(error Non-GKI API detection failed; fix the reported source interface instead of overriding the version)
++endif
++ccflags-y += $(KSU_COMPAT_PROBE_FLAGS)
 +endif
 +
  ifeq ($(CONFIG_KSU_SUSFS), y)
++KSU_SUSFS_ABI_VERSION := $(shell sh "$(KSU_KERNEL_DIR)/scripts/check-susfs-tree.sh" "$(srctree)" || echo KSU_SUSFS_ABI_FAILED)
++ifeq ($(KSU_SUSFS_ABI_VERSION),KSU_SUSFS_ABI_FAILED)
++$(error SUSFS source ABI check failed; apply the matching patch and inline hooks before building)
++endif
++$(info -- SUSFS core ABI: $(KSU_SUSFS_ABI_VERSION))
  $(info -- $(REPO_NAME): using SUSFS_INLINE_HOOK)
  else
-@@ -90,6 +101,76 @@ ifeq ($(shell grep -q "struct selinux_state " $(srctree)/security/selinux/includ
+ $(info -- $(REPO_NAME): using Unknown)
+@@ -90,6 +116,64 @@ ifeq ($(shell grep -q "struct selinux_state " $(srctree)/security/selinux/includ
  ccflags-y += -DKSU_COMPAT_HAS_SELINUX_STATE
  endif
  
@@ -78,18 +94,6 @@ index e71a0bb..e17d8c4 100644
 +ccflags-y += -DKSU_COMPAT_SIDTAB_AS_REFERENCE
 +endif
 +
-+ifeq ($(shell grep -q "hlist_head" $(srctree)/include/linux/lsm_hooks.h; echo $$?),0)
-+ccflags-y += -DKSU_COMPAT_HLIST_FOR_SECURITY_HOOK_LIST
-+endif
-+
-+ifeq ($(shell grep -F -q "int (*setprocattr)(const char *name, void *value, size_t size);" $(srctree)/include/linux/lsm_hooks.h; echo $$?),0)
-+ccflags-y += -DKSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE
-+endif
-+
-+ifeq ($(shell grep -F -q "char *lsm_names" $(srctree)/security/security.c; echo $$?),0)
-+ccflags-y += -DKSU_COMPAT_REQUIRE_PROVIDE_LSM_NAME
-+endif
-+
 +ifeq ($(shell grep -q "POLICYDB_CONFIG_ANDROID_NETLINK_ROUTE" $(srctree)/security/selinux/ss/policydb.h; echo $$?),0)
 +ccflags-y += -DKSU_COMPAT_HAS_POLICYDB_CONFIG_ANDROID_NETLINK_ROUTE
 +endif
@@ -115,7 +119,7 @@ index e71a0bb..e17d8c4 100644
  ifeq ($(shell grep -q "strncpy_from_user_nofault" $(srctree)/include/linux/uaccess.h; echo $$?),0)
  ccflags-y += -DKSU_HAS_STRNCPY_FROM_USER_NOFAULT
  endif
-@@ -154,4 +235,7 @@ endif
+@@ -154,4 +238,7 @@ endif
  ccflags-y += -Wno-strict-prototypes -Wno-int-conversion -Wno-gcc-compat -Wno-missing-prototypes
  ccflags-y += -Wno-declaration-after-statement -Wno-unused-function
  
@@ -124,7 +128,7 @@ index e71a0bb..e17d8c4 100644
 +
  # Keep a new line here!! Because someone may append config
 diff --git a/kernel/feature/selinux_hide.h b/kernel/feature/selinux_hide.h
-index 5a04371..8c19916 100644
+index 5a04371..97e6cb7 100644
 --- a/kernel/feature/selinux_hide.h
 +++ b/kernel/feature/selinux_hide.h
 @@ -1,10 +1,24 @@
@@ -142,7 +146,7 @@ index 5a04371..8c19916 100644
  void ksu_selinux_hide_handle_post_fs_data();
  
 +#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0) || defined(KSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE)
++#ifdef KSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE
 +typedef int (*setprocattr_fn)(const char *name, void *value, size_t size);
 +int ksu_handle_selinux_setprocattr(const char *name, void *value, size_t size);
 +#else
@@ -437,7 +441,7 @@ index 153db2a..2af5bfe 100644
 \ No newline at end of file
 +}
 diff --git a/kernel/infra/kernel_compat.h b/kernel/infra/kernel_compat.h
-index 1114533..28e6906 100644
+index 1114533..17b121d 100644
 --- a/kernel/infra/kernel_compat.h
 +++ b/kernel/infra/kernel_compat.h
 @@ -88,7 +88,7 @@ static int install_session_keyring(struct key *keyring)
@@ -458,25 +462,54 @@ index 1114533..28e6906 100644
  {
      long ret = __strncpy_from_user_nofault(dst, unsafe_addr, count);
  
-@@ -170,7 +170,7 @@ long ksu_strncpy_from_user_nofault(char *dst, const void __user *unsafe_addr, lo
+@@ -168,9 +168,9 @@ long ksu_strncpy_from_user_nofault(char *dst, const void __user *unsafe_addr, lo
+     return ret;
+ }
  
- #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)
+-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)
++#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0) && !defined(KSU_HAS_KERNEL_READ_POS)
  // https://elixir.bootlin.com/linux/v4.14.336/source/fs/read_write.c#L418
 -ssize_t ksu_kernel_read_compat(struct file *p, void *buf, size_t count, loff_t *pos)
 +static inline ssize_t ksu_kernel_read_compat(struct file *p, void *buf, size_t count, loff_t *pos)
  {
      mm_segment_t old_fs;
      old_fs = get_fs();
-@@ -180,7 +180,7 @@ ssize_t ksu_kernel_read_compat(struct file *p, void *buf, size_t count, loff_t *
+@@ -179,8 +179,12 @@ ssize_t ksu_kernel_read_compat(struct file *p, void *buf, size_t count, loff_t *
+     set_fs(old_fs);
      return result;
  }
++#define kernel_read ksu_kernel_read_compat
++#endif
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0) && !defined(KSU_HAS_KERNEL_WRITE_POS)
  // https://elixir.bootlin.com/linux/v4.14.336/source/fs/read_write.c#L512
 -ssize_t ksu_kernel_write_compat(struct file *p, const void *buf, size_t count, loff_t *pos)
 +static inline ssize_t ksu_kernel_write_compat(struct file *p, const void *buf, size_t count, loff_t *pos)
  {
      mm_segment_t old_fs;
      old_fs = get_fs();
-@@ -307,6 +307,33 @@ __weak void groups_sort(struct group_info *group_info)
+@@ -189,9 +193,8 @@ ssize_t ksu_kernel_write_compat(struct file *p, const void *buf, size_t count, l
+     set_fs(old_fs);
+     return res;
+ }
+-#define kernel_read ksu_kernel_read_compat
+ #define kernel_write ksu_kernel_write_compat
+-#endif // < 4.14
++#endif
+ 
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 12, 0)
+ static inline void *ksu_kvmalloc(size_t size, gfp_t flags)
+@@ -225,7 +228,8 @@ static inline void ksu_kvfree(void *buf)
+ #define close_fd sys_close
+ #endif
+ 
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0) && \
++    !defined(KSU_HAS_CLOSE_FD)
+ #include <linux/fdtable.h>
+ __weak int close_fd(unsigned fd)
+ {
+@@ -307,6 +311,33 @@ __weak void groups_sort(struct group_info *group_info)
  #define in_compat_syscall() is_compat_task()
  #endif
  
@@ -1804,10 +1837,10 @@ index 0000000..0bf03be
 +}
 diff --git a/kernel/non_gki/selinux_hide.c b/kernel/non_gki/selinux_hide.c
 new file mode 100644
-index 0000000..c62bd6f
+index 0000000..54afce9
 --- /dev/null
 +++ b/kernel/non_gki/selinux_hide.c
-@@ -0,0 +1,2171 @@
+@@ -0,0 +1,2172 @@
 +// Non-GKI compatibility port from ReSukiSU main@fa1da13f, with selected
 +// SELinux hide fixes from ba8cfa5 and 969de3d.
 +#include "kernel_includes.h"
@@ -2138,7 +2171,7 @@ index 0000000..c62bd6f
 +extern setprocattr_fn ksu_orig_setprocattr;
 +#endif
 +
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0) || defined(KSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE)
++#ifdef KSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE
 +int __nocfi ksu_handle_selinux_setprocattr(const char *name, void *value, size_t size)
 +#else
 +int __nocfi ksu_handle_selinux_setprocattr(struct task_struct *p, char *name, void *value, size_t size)
@@ -2183,7 +2216,7 @@ index 0000000..c62bd6f
 +call_orig:
 +#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 +    return ((setprocattr_fn)selinux_setprocattr_hook.original)(name, value, size);
-+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0) || defined(KSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE)
++#elif defined(KSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE)
 +    return ksu_orig_setprocattr(name, value, size);
 +#else
 +    return ksu_orig_setprocattr(p, name, value, size);
@@ -2194,7 +2227,7 @@ index 0000000..c62bd6f
 +static sel_open_handle_status_fn orig_sel_open_handle_status, *sel_open_handle_status_slot;
 +static int my_sel_open_handle_status(struct inode *inode, struct file *filp)
 +{
-+    if (likely(ksu_get_uid_t(current_uid()) >= 10000 && ksu_selinux_hide_enabled)) {
++    if (unlikely(READ_ONCE(ksu_selinux_hide_enabled)) && ksu_get_uid_t(current_uid()) >= 10000) {
 +        void *data;
 +        mutex_lock(ksu_selinux_status_lock);
 +        data = fake_status;
@@ -2422,7 +2455,7 @@ index 0000000..c62bd6f
 +    struct security_hook_list *hp;
 +
 +    // https://github.com/torvalds/linux/commit/df0ce17331e2501dbffc060041dfc6c5f85227b5
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0) || defined(KSU_COMPAT_HLIST_FOR_SECURITY_HOOK_LIST)
++#ifdef KSU_COMPAT_HLIST_FOR_SECURITY_HOOK_LIST
 +#define ksu_for_each_lsm_entry hlist_for_each_entry
 +#else
 +#define ksu_for_each_lsm_entry list_for_each_entry
@@ -2431,11 +2464,11 @@ index 0000000..c62bd6f
 +    ksu_for_each_lsm_entry(hp, &security_hook_heads.setprocattr, list)
 +    {
 +        // https://github.com/torvalds/linux/commit/d69dece5f5b6bc7a5e39d2b6136ddc69469331fe
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0) || defined(KSU_COMPAT_REQUIRE_PROVIDE_LSM_NAME)
-+        // when we are in 4.11+, we can ensure we are control "selinux" LSM by that
++#ifdef KSU_COMPAT_REQUIRE_PROVIDE_LSM_NAME
++        // Vendor trees can backport the name field independently of the version.
 +        if (strcmp("selinux", hp->lsm))
 +            continue;
-+#endif // #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
++#endif // KSU_COMPAT_REQUIRE_PROVIDE_LSM_NAME
 +        selinux_setprocattr_hook_ptr = (unsigned long)&hp->hook.setprocattr;
 +        ksu_orig_setprocattr = hp->hook.setprocattr;
 +        setprocattr_fn my_setprocattr = ksu_handle_selinux_setprocattr;
@@ -2489,7 +2522,7 @@ index 0000000..c62bd6f
 +
 +static int selinux_hide_feature_get(u64 *value)
 +{
-+    *value = ksu_selinux_hide_enabled ? 1 : 0;
++    *value = READ_ONCE(ksu_selinux_hide_enabled) ? 1 : 0;
 +    return 0;
 +}
 +
@@ -2499,7 +2532,6 @@ index 0000000..c62bd6f
 +    int ret = 0;
 +    pr_info("selinux_hide: set to %d\n", enable);
 +    mutex_lock(&selinux_hide_mutex);
-+    ksu_selinux_hide_enabled = enable;
 +    if (enable) {
 +        if (!ksu_selinux_hide_running) {
 +            ret = ksu_selinux_hide_enable();
@@ -2513,6 +2545,8 @@ index 0000000..c62bd6f
 +            ksu_selinux_hide_running = false;
 +        }
 +    }
++    /* Report the feature as enabled only after its hooks are active. */
++    WRITE_ONCE(ksu_selinux_hide_enabled, enable && !ret);
 +    mutex_unlock(&selinux_hide_mutex);
 +    return ret;
 +}
@@ -5519,6 +5553,111 @@ index eed56f9..e4dfe70 100644
  }
  
  #define MAX_ARG_STRINGS 0x7FFFFFFF
+diff --git a/kernel/scripts/check-susfs-tree.sh b/kernel/scripts/check-susfs-tree.sh
+new file mode 100644
+index 0000000..40be86c
+--- /dev/null
++++ b/kernel/scripts/check-susfs-tree.sh
+@@ -0,0 +1,28 @@
++#!/bin/sh
++# Validate the SUSFS core ABI before compiling KernelSU's inline-hook path.
++set -eu
++
++root=${1:?usage: check-susfs-tree.sh KERNEL_SOURCE_ROOT}
++fail() { echo "[KSU SUSFS] $*" >&2; exit 1; }
++
++for path in fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h; do
++    [ -r "$root/$path" ] || fail "missing $path; apply the matching kernel-series SUSFS patch first"
++done
++
++version=$(sed -n 's/^[[:space:]]*#define[[:space:]]*SUSFS_VERSION[[:space:]]*"\([^"]*\)".*/\1/p' \
++    "$root/include/linux/susfs.h" | head -n 1)
++[ -n "$version" ] || fail 'SUSFS_VERSION is absent from include/linux/susfs.h'
++
++grep -Eq 'void[[:space:]]+susfs_init[[:space:]]*\(' "$root/include/linux/susfs.h" ||
++    fail 'susfs_init declaration is missing'
++for name in susfs_set_current_proc_no_su susfs_is_current_proc_no_su \
++            susfs_set_current_proc_umounted susfs_set_current_proc_umounted_for_zygote_next; do
++    grep -Eq "[[:space:]]$name[[:space:]]*\\(" "$root/include/linux/susfs_def.h" ||
++        fail "$name is missing from susfs_def.h"
++done
++
++case "$version" in
++    v2.3.*) echo "$version" ;;
++    *) echo "[KSU SUSFS] $version has the required core hooks, but only v2.3.x is targeted by this dev check" >&2
++       echo "$version" ;;
++esac
+diff --git a/kernel/scripts/probe-compat.sh b/kernel/scripts/probe-compat.sh
+new file mode 100644
+index 0000000..11c9f67
+--- /dev/null
++++ b/kernel/scripts/probe-compat.sh
+@@ -0,0 +1,65 @@
++#!/bin/sh
++# Build-time probes for vendor Non-GKI trees. Never infer an ABI from uname.
++set -eu
++
++root=${1:?usage: probe-compat.sh KERNEL_SOURCE_ROOT}
++fail() { echo "[KSU compat] $*" >&2; exit 1; }
++
++# Join declarations split across lines and ignore commented-out prototypes.
++compact_c() {
++    awk '
++        { sub(/\/\/.*$/, ""); text = text " " $0 }
++        END {
++            while (match(text, /\/\*([^*]|\*+[^*/])*\*+\//))
++                text = substr(text, 1, RSTART - 1) " " substr(text, RSTART + RLENGTH)
++            gsub(/[[:space:]]+/, " ", text)
++            print text
++        }
++    ' "$@"
++}
++
++if [ -r "$root/include/linux/lsm_hooks.h" ]; then
++    lsm=$(compact_c "$root/include/linux/lsm_hooks.h")
++    if [ -r "$root/include/linux/lsm_hook_defs.h" ]; then
++        lsm="$lsm $(compact_c "$root/include/linux/lsm_hook_defs.h")"
++    fi
++else
++    [ -r "$root/include/linux/security.h" ] || fail 'missing LSM headers'
++    lsm=$(compact_c "$root/include/linux/security.h")
++fi
++
++has_lsm() { printf '%s\n' "$lsm" | grep -Eq "$1"; }
++if has_lsm 'struct security_hook_list[[:space:]]*\{'; then
++    echo -DKSU_COMPAT_HAS_LIST_OF_LSM_HOOKS
++fi
++if has_lsm 'struct hlist_node[[:space:]]+list[[:space:]]*;'; then
++    echo -DKSU_COMPAT_HLIST_FOR_SECURITY_HOOK_LIST
++fi
++if has_lsm 'char[[:space:]]*\*[[:space:]]*lsm[[:space:]]*;'; then
++    echo -DKSU_COMPAT_REQUIRE_PROVIDE_LSM_NAME
++fi
++
++# Both pre-5.1 function pointers and backported LSM_HOOK() declarations occur
++# in 4.9/4.14/4.19 trees. Unknown prototypes must not silently select an ABI.
++if has_lsm '(\(\*setprocattr\)[[:space:]]*\(|LSM_HOOK\([^,]+,[^,]+,[[:space:]]*setprocattr,)[[:space:]]*const char[[:space:]]*\*'; then
++    echo -DKSU_COMPAT_SETPROCATTR_USE_NEW_PROTOTYPE
++elif ! has_lsm '(\(\*setprocattr\)[[:space:]]*\(|LSM_HOOK\([^,]+,[^,]+,[[:space:]]*setprocattr,)[[:space:]]*struct task_struct[[:space:]]*\*'; then
++    fail 'unrecognized setprocattr prototype; inspect vendor LSM headers before building'
++fi
++
++[ -r "$root/include/linux/fs.h" ] || fail 'missing include/linux/fs.h'
++fs=$(compact_c "$root/include/linux/fs.h")
++for api in read write; do
++    if printf '%s\n' "$fs" | grep -Eq "(^|[[:space:]])kernel_${api}[[:space:]]*\([^;{}]*loff_t[[:space:]]*\*[^;{}]*\)"; then
++        case "$api" in
++            read) echo -DKSU_HAS_KERNEL_READ_POS ;;
++            write) echo -DKSU_HAS_KERNEL_WRITE_POS ;;
++        esac
++    fi
++done
++
++if [ -r "$root/include/linux/fdtable.h" ]; then
++    if compact_c "$root/include/linux/fdtable.h" | grep -Eq '(^|[[:space:]])close_fd[[:space:]]*\([[:space:]]*unsigned'; then
++        echo -DKSU_HAS_CLOSE_FD
++    fi
++fi
 diff --git a/kernel/selinux/selinux.c b/kernel/selinux/selinux.c
 index 004c61c..e23acd5 100644
 --- a/kernel/selinux/selinux.c
