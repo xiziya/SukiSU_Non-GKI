@@ -37,4 +37,14 @@ if (( local_version >= 4 )); then
   grep -q 'KSU_GET_INFO_FLAG_BUNDLED' "$local_header" || die 'UAPI 4 is declared without the bundled-LKM flag'
 fi
 
+if (( local_version >= 5 )); then
+  grep -q 'EVENT_SERVICES' "$local_header" || die 'UAPI 5 is declared without the services event'
+  grep -q 'services_started = false' kernel/supercall/dispatch.c ||
+    die 'UAPI 5 is declared without a services reset on post-fs-data'
+  grep -q 'case EVENT_SERVICES:' kernel/supercall/dispatch.c ||
+    die 'UAPI 5 is declared without the services event handler'
+  grep -A8 'case EVENT_SERVICES:' kernel/supercall/dispatch.c | grep -q 'return 1;' ||
+    die 'UAPI 5 is declared without the start/skip result'
+fi
+
 echo "[+] Manager UAPI $local_version matches $upstream_ref"

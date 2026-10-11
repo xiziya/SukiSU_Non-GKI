@@ -1,4 +1,5 @@
-// Non-GKI compatibility port from ReSukiSU main@fa1da13f.
+// Non-GKI compatibility port from ReSukiSU main@fa1da13f, with selected
+// SELinux hide fixes from ba8cfa5 and 969de3d.
 #include "kernel_includes.h"
 
 #include <linux/cred.h>
@@ -142,6 +143,22 @@ static void ksu_security_compute_av_user(u32 ssid, u32 tsid, u16 tclass, struct 
 static write_op_fn *context_write, *access_write;
 static write_op_fn orig_context_write, orig_access_write;
 
+/*
+ * Keep the live SID table in step with the policy snapshot exposed to apps.
+ * Resolve parsed live contexts even when the snapshot lookup later fails,
+ * avoiding a success-only lookup branch. This is not a complete timing fix.
+ */
+static void ksu_sync_live_context_sid(const char *scontext, u32 len)
+{
+    u32 sid;
+
+#ifdef KSU_COMPAT_USE_SELINUX_STATE
+    (void)security_context_to_sid(&selinux_state, scontext, len, &sid, GFP_KERNEL);
+#else
+    (void)security_context_to_sid(scontext, len, &sid, GFP_KERNEL);
+#endif
+}
+
 static ssize_t my_write_context(struct file *file, char *buf, size_t size)
 {
     // apply to all app uids
@@ -156,6 +173,7 @@ static ssize_t my_write_context(struct file *file, char *buf, size_t size)
     length = avc_has_perm(current_sid(), SECINITSID_SECURITY, SECCLASS_SECURITY, SECURITY__CHECK_CONTEXT, NULL);
     if (length)
         goto out;
+    ksu_sync_live_context_sid(buf, size);
     length = security_context_to_sid_with_policy(backup_sepolicy, buf, size, &sid, SECSID_NULL, GFP_KERNEL);
     if (length)
         goto out;
@@ -176,6 +194,7 @@ static ssize_t my_write_context(struct file *file, char *buf, size_t size)
                           SECURITY__CHECK_CONTEXT, NULL);
     if (length)
         goto out;
+    ksu_sync_live_context_sid(buf, size);
 
     length = security_context_to_sid(&fake_state, buf, size, &sid, GFP_KERNEL);
     if (length)
@@ -188,6 +207,7 @@ static ssize_t my_write_context(struct file *file, char *buf, size_t size)
     length = avc_has_perm(current_sid(), SECINITSID_SECURITY, SECCLASS_SECURITY, SECURITY__CHECK_CONTEXT, NULL);
     if (length)
         goto out;
+    ksu_sync_live_context_sid(buf, size);
 
     length = ksu_security_context_to_sid(buf, size, &sid, GFP_KERNEL);
     if (length)
@@ -250,6 +270,9 @@ static ssize_t my_write_access(struct file *file, char *buf, size_t size)
     if (sscanf(buf, "%s %s %hu", scon, tcon, &tclass) != 3)
         goto out;
 
+    ksu_sync_live_context_sid(scon, strlen(scon));
+    ksu_sync_live_context_sid(tcon, strlen(tcon));
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
     length = security_context_to_sid_with_policy(backup_sepolicy, scon, strlen(scon), &ssid, SECSID_NULL, GFP_KERNEL);
     if (length)
@@ -311,7 +334,7 @@ int __nocfi ksu_handle_selinux_setprocattr(const char *name, void *value, size_t
 int __nocfi ksu_handle_selinux_setprocattr(struct task_struct *p, char *name, void *value, size_t size)
 #endif
 {
-    int error;
+    int error, perm_error;
     u32 mysid, sid;
     char *str = value;
     if (likely(ksu_get_uid_t(current_uid()) < 10000)) {
@@ -321,19 +344,6 @@ int __nocfi ksu_handle_selinux_setprocattr(struct task_struct *p, char *name, vo
     if (strcmp(name, "current")) {
         goto call_orig;
     }
-    mysid = current_sid();
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
-    error = avc_has_perm(mysid, mysid, SECCLASS_PROCESS, PROCESS__SETCURRENT, NULL);
-#elif defined(KSU_COMPAT_USE_SELINUX_STATE)
-    error = avc_has_perm(&selinux_state, mysid, mysid, SECCLASS_PROCESS, PROCESS__SETCURRENT, NULL);
-#else
-    error = avc_has_perm(mysid, mysid, SECCLASS_PROCESS, PROCESS__SETCURRENT, NULL);
-#endif
-    if (error) {
-        return error;
-    }
-
     if (size && str[0] && str[0] != '\n') {
         if (str[size - 1] == '\n') {
             str[size - 1] = 0;
@@ -347,7 +357,16 @@ int __nocfi ksu_handle_selinux_setprocattr(struct task_struct *p, char *name, vo
         error = ksu_security_context_to_sid(str, size, &sid, GFP_KERNEL);
 #endif
         if (error) {
-            return error;
+            /* Match the original hook's permission-before-parse ordering. */
+            mysid = current_sid();
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0)
+            perm_error = avc_has_perm(mysid, mysid, SECCLASS_PROCESS, PROCESS__SETCURRENT, NULL);
+#elif defined(KSU_COMPAT_USE_SELINUX_STATE)
+            perm_error = avc_has_perm(&selinux_state, mysid, mysid, SECCLASS_PROCESS, PROCESS__SETCURRENT, NULL);
+#else
+            perm_error = avc_has_perm(mysid, mysid, SECCLASS_PROCESS, PROCESS__SETCURRENT, NULL);
+#endif
+            return perm_error ? perm_error : error;
         }
     }
 

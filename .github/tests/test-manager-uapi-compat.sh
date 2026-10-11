@@ -6,8 +6,10 @@ cd "$repo_root"
 
 header=kernel/include/uapi/supercall.h
 
-grep -Eq 'KERNEL_SU_UAPI_VERSION, 4\)' "$header"
+grep -Eq 'KERNEL_SU_UAPI_VERSION, 5\)' "$header"
 grep -Eq 'KSU_GET_INFO_FLAG_BUNDLED, \(1U << 4\)\)' "$header"
+grep -Eq 'EVENT_SERVICES, 4\)' "$header"
+grep -A8 'case EVENT_SERVICES:' kernel/supercall/dispatch.c | grep -q 'return 1;'
 grep -q 'struct ksu_driver_context' kernel/supercall/supercall.c
 grep -q 'ksu_install_su_fd' kernel/supercall/supercall.c
 grep -q 'ksu_is_su_session_fd' kernel/supercall/dispatch.c

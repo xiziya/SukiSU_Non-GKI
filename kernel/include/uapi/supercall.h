@@ -15,7 +15,8 @@
 // 2: allowlist v4 root profile flags
 // 3: scoped su-session driver fd
 // 4: add KSU_GET_INFO_FLAG_BUNDLED
-DECLARE(__u32, KERNEL_SU_UAPI_VERSION, 4);
+// 5: EVENT_SERVICES returns 1 to start, 0 to skip a duplicate service stage
+DECLARE(__u32, KERNEL_SU_UAPI_VERSION, 5);
 
 /* Magic numbers for reboot hook to install fd */
 DECLARE(__u32, KSU_INSTALL_MAGIC1, 0xDEADBEEF);

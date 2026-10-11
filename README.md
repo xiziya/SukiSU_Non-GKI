@@ -6,8 +6,8 @@
 
 ## 基线
 
-- SukiSU Ultra `builtin`: `b20dee702035af09cb2ecb5f35443bbc1747f3e6`
-- ReSukiSU `main`: `fa1da13f890a19335d3f8f5c62bb5bde466fc384`
+- SukiSU Ultra `builtin`: `6c284e957feaa9a388a9f1c37dc4ec80d95e434b`（2026-10-09）
+- ReSukiSU `main` 对照：`f6cb7e70c10ebde149f3121ae68b945514fd0801`（2026-10-11）
 - 验证内核: Evolution-X-Devices `kernel_xiaomi_sdm845` `bka`
 - 验证内核提交: `b0fb2a6d2d20c1f3219183e8590fff50a3a39fd6` (`4.9.337`)
 
@@ -20,9 +20,12 @@
 - 如果 SUSFS 已提供新版 SELinux hide hook，则直接复用；否则使用 ReSukiSU 风格的运行时 function/LSM slot patch。
 - `kernel/Makefile` 保留官方 builtin 的版本/UAPI 契约；GitHub API 或 `main` 引用不可用时使用本地提交计数或 `VERSION_BASE`，避免错误回退到管理器拒绝的 `KSU_VERSION=13000`。
 - 兼容旧版 Manager 的 app-profile v2/v3 ioctl：按用户空间版本读写 776 字节前缀，并迁移到当前 v4 profile。
-- 对齐最新版 Manager 的 UAPI 4：完整移植 UAPI 3 的受限 SU 会话 FD，并声明 UAPI 4 的 bundled-LKM 能力位；SUSFS 手动 exec hook 只在 `su -> ksud` 成功后安装会话 FD，避免失败路径泄漏权限。
+- 保留 Manager UAPI 3 的受限 SU 会话 FD 和 UAPI 4 的 bundled-LKM 能力位；SUSFS 手动 exec hook 只在 `su -> ksud` 成功后安装会话 FD，避免失败路径泄漏权限。
 - `post-fs-data` 在 observer 注册后增加一次性 manager UID 扫描，覆盖 `packages.list` 已存在的旧版 Android 启动时序。
 - Non-GKI 的每条 SELinux policy 更新路径都会刷新 SUSFS SID 缓存；原补丁的 `kernel/selinux/rules.c` hunk 不会覆盖实际编译的 `kernel/non_gki/rules.c`，已按实际入口移植。
+- 同步上游的 SELinux RCU 受保护读取、xperms 合并和服务阶段去重逻辑；Non-GKI 独立实现中的对应路径也单独更新，不只合并 5.10+ 的文件。
+- 参照 ReSukiSU `ba8cfa5`、`969de3d`，Non-GKI SELinux hide 的查询会同步实际 SID 表，`setprocattr` 的权限检查顺序与原始 hook 一致。`fa12ffd` 的全量双策略解析属于大幅结构改写，尚未直接覆盖本仓库的旧内核实现；不能仅凭编译通过声称完全消除时间侧信道。
+- 对齐官方 Manager UAPI 5：`EVENT_SERVICES` 返回 1 表示首次执行、0 表示跳过重复服务阶段，并在 `post-fs-data` 时复位。保留先前 UAPI 3/4 的会话 FD 与 bundled-LKM 行为。
 
 这些兼容修改已经直接合并在本仓库源码中。GitHub Actions 会从当前 checkout 直接运行 `kernel/setup.sh`，不再额外应用 Manager 兼容补丁，避免重复修改或上下文冲突。
 
@@ -57,6 +60,10 @@ curl -LSs https://raw.githubusercontent.com/xiziya/SukiSU_Non-GKI/builtin/kernel
 
 旧版 `susfs_inline_hook_patches.sh` 会搜索 `ksu_hide_setprocattr`。本移植不伪造该旧接口，因此脚本会跳过那一个 hook；SELinux hide 由 Non-GKI 运行时兼容层接管。脚本中的其他 SukiSU/SUSFS inline hooks 不受影响。
 
+### 上游同步与分支
+
+`builtin` 是稳定兼容版；上游基线为上述 SukiSU Ultra `builtin` 提交。`dev` 从该基线派生，单独放置旧内核接口探测、SUSFS 2.3 适配以及 SU/SELinux 隐藏的实验优化。`dev` 的功能不自动回灌到 `builtin`，须经过对应内核编译和设备实测。同步记录见 `docs/upstream-sync-20261012.md`。
+
 ### Zygisk Next 兼容性说明
 
 Zygisk Next 是用户空间模块，不由 KernelSU 内核驱动实现。上游识别依赖 `GET_INFO` 返回的 `KSU_VERSION`、UAPI 版本和功能位；本仓库保留了 SukiSU Ultra 的 UAPI 编号，并在离线/浅克隆时使用稳定的非零版本回退，避免管理器把内核误判为旧版或不支持。内核本身没有可安全添加的“Zygisk 已启用”位，因此“需要重启”提示不能通过伪造一个内核功能位解决；安装/升级 Zygisk Next 后按其模块说明重启一次是正常行为。若重启后仍显示该提示，应提供 Zygisk Next bugreport 及管理器版本，不能仅凭内核编译日志判断。
@@ -75,7 +82,7 @@ Zygisk Next 是用户空间模块，不由 KernelSU 内核驱动实现。上游�
 
 工作流会严格读取内核根 `Makefile` 的 `VERSION`/`PATCHLEVEL`，选择 `susfs_patch_to_<版本>.patch`。SUSFS 或 inline hook 补丁失败时，工作流会在生成报告前收集内核树中的 `.rej`、`.orig`、补丁源文件、完整应用日志和机型补丁重叠验证日志，并随构建产物上传供下载排查。启用 DroidSpaces 会从官方最新 release 下载 APK/runtime，并在 SUSFS 同时启用时显示官方兼容性警告。启用 AnyKernel3 后会按 codename、A/B 和所选 `Image.gz`/`Image.gz-dtb` 目标生成 `anykernel.sh`，并写入指定的刷入提示文案。
 
-可用以下命令生成只包含兼容源码的上游基线补丁，默认基于 SukiSU Ultra `builtin` 提交 `b20dee702035af09cb2ecb5f35443bbc1747f3e6`：
+可用以下命令生成只包含兼容源码的上游基线补丁，默认基于 SukiSU Ultra `builtin` 提交 `6c284e957feaa9a388a9f1c37dc4ec80d95e434b`：
 
 ```sh
 bash .github/scripts/generate-upstream-compat-patch.sh
