@@ -39,21 +39,21 @@ static int ksu_install_fd_with_permissions(unsigned int fd_flags, unsigned long 
 
     fd = get_unused_fd_flags(fd_flags);
     if (fd < 0) {
-        pr_err("ksu_install_fd: failed to get unused fd\n");
+        pr_err("ksu_install_fd: failed to get unused fd for %s\n", name);
         kfree(context);
         return fd;
     }
 
     filp = anon_inode_getfile(name, &anon_ksu_fops, context, O_RDWR);
     if (IS_ERR(filp)) {
-        pr_err("ksu_install_fd: failed to create anon inode file\n");
+        pr_err("ksu_install_fd: failed to create anon inode file for %s\n", name);
         put_unused_fd(fd);
         kfree(context);
         return PTR_ERR(filp);
     }
 
     fd_install(fd, filp);
-    pr_info("ksu fd installed: %d for pid %d\n", fd, current->pid);
+    pr_info("%s fd installed: %d for pid %d\n", name, fd, current->pid);
     return fd;
 }
 
