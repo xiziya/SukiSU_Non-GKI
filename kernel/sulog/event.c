@@ -361,22 +361,20 @@ out_drop:
 }
 #endif
 
-static inline struct user_arg_ptr *user_arg_null_ptr(void)
-{
-    static struct user_arg_ptr null_arg = { 0 };
-    return &null_arg;
-}
-
 static struct ksu_sulog_pending_event *ksu_sulog_capture_grant_root(const struct ksu_sulog_identity *identity,
                                                                     gfp_t gfp)
 {
     struct ksu_sulog_pending_event *pending;
     struct ksu_sulog_event *event;
+#ifndef CONFIG_KSU_SUSFS
+    const struct user_arg_ptr empty_argv = { 0 };
+#endif
 
-    // This is actually stupid fix
-    #define USER_ARG_NULL user_arg_null_ptr()
-
-    pending = ksu_sulog_capture(KSU_SULOG_EVENT_IOCTL_GRANT_ROOT, NULL, USER_ARG_NULL, gfp);
+#ifdef CONFIG_KSU_SUSFS
+    pending = ksu_sulog_capture(KSU_SULOG_EVENT_IOCTL_GRANT_ROOT, NULL, NULL, gfp);
+#else
+    pending = ksu_sulog_capture(KSU_SULOG_EVENT_IOCTL_GRANT_ROOT, NULL, empty_argv, gfp);
+#endif
     if (!pending)
         return NULL;
 
