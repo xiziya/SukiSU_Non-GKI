@@ -80,6 +80,16 @@ Zygisk Next 是用户空间模块，不由 KernelSU 内核驱动实现。上游�
 
 ## GitHub Actions 通用构建
 
+### 可选 pstore / ramoops 自动日志
+
+中英文运行界面均有“持久化崩溃/关机前日志”开关（`enable_pstore_debug`，默认关闭），示范模板同步提供。开启后按源码 Kconfig 能力启用并核验 PRINTK、PSTORE、CONSOLE、RAM 后端和可用的 PMSG，适配 4.x Non-GKI 及 5.x/6.x GKI 的日志配置，不受伪装版本影响。核心依赖不满足会明确失败；关闭时保持原配置。不会额外开启 FTRACE，也不会改变温控、WLAN、SELinux 或 SukiSU 逻辑。
+
+后端正常注册后内核自动将最近 console 消息写入保留 RAM，并按 dump 策略记录 panic/oops；不依赖 ADB 或关机脚本。但必须已有设备正确的 ramoops 保留内存及非零缓冲区。源码节点扫描只列候选，**不会猜测物理地址或自动更改 DT/DTBO**，也不保证突然掉电后保留日志。GKI 仍需匹配工具链、ABI 和 vendor_boot/DTBO，本选项不是完整 GKI 构建支持。
+
+开启后，成功/失败产物均尽量包含 `pstore-debug/`：最终配置、配置摘要、设备树候选、状态说明及设备端采集脚本。构建报告列出配置/后端/运行限制；采集脚本不删除原记录。详见 [pstore 使用与取日志说明](docs/pstore-debug.md)。为保持 GitHub 手动运行输入项不超过 25 个，原架构文本框改为固定 `ARCH=arm64`，与现有工具链、镜像目标保持一致。
+
+### 构建参数
+
 `.github/workflows/build-custom-kernel-Zh_CN.yml` 提供简体中文 `workflow_dispatch` 构建入口，`.github/workflows/build-custom-kernel-Eng.yml` 提供英文入口。两者使用完全相同的构建逻辑和输入参数，仅界面显示语言不同。必须填写设备 `codename` 和以 `.git` 结尾的纯净内核仓库；`kernel_branch` 默认 `bka`。`defconfig` 请输入目录下的 `*_defconfig` 路径，例如 `vendor/xiaomi/mi845_defconfig`，也可以留空让工作流按 codename 自动探测；只有唯一候选才会自动使用，多个候选会直接失败并列出候选。`device_config` 是可选的 `目录/*.config` 路径。
 
 工作流提供可选的内核版本伪装开关。启用后必须填写 `主版本.次版本.子版本` 三段纯数字版本号，例如 `4.9.337`。伪装在集成步骤之后登记，并在构建配置阶段只覆盖最终 `KERNELRELEASE`；不会重写内核根 `Makefile` 的 `VERSION`、`PATCHLEVEL`、`SUBLEVEL`，因此编译期 API 分支与 SUSFS 补丁仍按源码真实系列选择。跨系列伪装仅改变对外报告的版本字符串，不能为旧内核提供新版 API。

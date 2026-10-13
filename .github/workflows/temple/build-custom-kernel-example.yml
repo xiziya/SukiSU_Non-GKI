@@ -11,6 +11,7 @@ on:
       kernel_repo: { description: Complete .git kernel repository URL, required: true, type: string }
       defconfig: { description: Path ending _defconfig, required: false, type: string }
       device_config: { description: Optional path ending .config, required: false, type: string }
+      enable_pstore_debug: { description: Persistent crash/console logs for 4.x/GKI; device ramoops reserved memory required, required: true, default: false, type: boolean }
       build_target: { description: Primary build target (Image.gz or Image.gz-dtb), required: false, default: Image.gz-dtb, type: choice, options: [Image.gz, Image.gz-dtb] }
       author: { description: Author, required: true, default: XiZi, type: string }
       ab_partition: { description: A/B device (reporting only; AK3 detects the active slot at install time), required: true, type: boolean }
@@ -31,3 +32,5 @@ on:
 
 # Copy the job steps from ../build-custom-kernel-Eng.yml and adjust toolchain/target
 # for the selected clean kernel tree before enabling this as a real workflow.
+# Keep ARCH=arm64 and forward inputs.enable_pstore_debug to ENABLE_PSTORE_DEBUG.
+# Copy the always-run pstore artifact step too; it preserves diagnostics on failure.
