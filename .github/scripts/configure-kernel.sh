@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd "${KERNEL_ROOT:?}"; out=${OUT_DIR:-out}; export OUT_DIR="$out"
 export ARCH=${ARCH:-arm64}
 export SUBARCH=${SUBARCH:-$ARCH}
@@ -207,6 +208,9 @@ if [[ -f "$wlan_root/Kconfig" && -f "$wlan_root/Kbuild" && \
   echo '[+] requested built-in Qualcomm qcacld WLAN driver'
 fi
 
+# Apply after all user/integration fragments; olddefconfig resolves dependencies.
+bash "$script_dir/configure-pstore.sh" prepare
+
 date_part=$(date -u -d "$KBUILD_BUILD_TIMESTAMP" +%Y%m%d 2>/dev/null || date -u +%Y%m%d); local="-${KERNEL_NAME:-by_XiZi}-${KERNEL_VERSION:-v1.0}-$date_part"
 sed -i '/^CONFIG_LOCALVERSION=/d' "$out/.config"; printf 'CONFIG_LOCALVERSION="%s"\n' "$local" >> "$out/.config"
 # Never append -g<commit>-dirty: all integrations intentionally change the
@@ -285,4 +289,6 @@ if [[ "${INTEGRATE_DROIDSPACES:-false}" == true ]]; then
     }
   done
 fi
+# Validate after the final olddefconfig, including the optional manual hook pass.
+bash "$script_dir/configure-pstore.sh" verify
 release=$(make O="$out" "${kernelrelease_args[@]}" -s kernelrelease); [[ ${#release} -le 64 ]] || { echo "[ERROR] kernelrelease is ${#release} characters (>64): $release" >&2; exit 1; }; echo "KERNEL_RELEASE=$release" >> "$GITHUB_ENV"

@@ -33,11 +33,11 @@ on:
         description: Optional path ending in .config
         required: false
         type: string
-      arch:
-        description: Kernel architecture
-        required: false
-        default: arm64
-        type: string
+      enable_pstore_debug:
+        description: Enable persistent crash/console logs (4.x/GKI; requires device ramoops reserved memory)
+        required: true
+        default: false
+        type: boolean
       build_target:
         description: Primary build target; choose Image.gz or Image.gz-dtb
         required: false
@@ -135,7 +135,9 @@ jobs:
       KERNEL_BRANCH: ${{ inputs.kernel_branch }}
       DEFCONFIG: ${{ inputs.defconfig }}
       DEVICE_CONFIG: ${{ inputs.device_config }}
-      ARCH: ${{ inputs.arch }}
+      # This workflow's toolchain and image targets are arm64-only.
+      ARCH: arm64
+      ENABLE_PSTORE_DEBUG: ${{ inputs.enable_pstore_debug }}
       BUILD_TARGET: ${{ inputs.build_target }}
       AUTHOR: ${{ inputs.author }}
       AB_PARTITION: ${{ inputs.ab_partition }}
@@ -308,6 +310,11 @@ jobs:
         if: always()
         shell: bash
         run: bash .github/scripts/collect-patch-diagnostics.sh
+
+      - name: Preserve pstore configuration and collection tools
+        if: always() && inputs.enable_pstore_debug
+        shell: bash
+        run: bash .github/scripts/configure-pstore.sh report
 
       - name: Generate build report
         if: always()

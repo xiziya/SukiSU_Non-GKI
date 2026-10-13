@@ -33,11 +33,11 @@ on:
         description: 可选配置路径，必须以 .config 结尾
         required: false
         type: string
-      arch:
-        description: 内核架构
-        required: false
-        default: arm64
-        type: string
+      enable_pstore_debug:
+        description: 是否开启持久化崩溃/关机前日志（4.x/GKI，需设备预留 ramoops 内存）
+        required: true
+        default: false
+        type: boolean
       build_target:
         description: 主编译目标；可选 Image.gz 或 Image.gz-dtb
         required: false
@@ -135,7 +135,9 @@ jobs:
       KERNEL_BRANCH: ${{ inputs.kernel_branch }}
       DEFCONFIG: ${{ inputs.defconfig }}
       DEVICE_CONFIG: ${{ inputs.device_config }}
-      ARCH: ${{ inputs.arch }}
+      # 工具链和镜像目标均为 arm64；留出一个输入项用于日志开关。
+      ARCH: arm64
+      ENABLE_PSTORE_DEBUG: ${{ inputs.enable_pstore_debug }}
       BUILD_TARGET: ${{ inputs.build_target }}
       AUTHOR: ${{ inputs.author }}
       AB_PARTITION: ${{ inputs.ab_partition }}
@@ -308,6 +310,11 @@ jobs:
         if: always()
         shell: bash
         run: bash .github/scripts/collect-patch-diagnostics.sh
+
+      - name: 保存 pstore 配置和设备日志采集工具
+        if: always() && inputs.enable_pstore_debug
+        shell: bash
+        run: bash .github/scripts/configure-pstore.sh report
 
       - name: 生成构建报告
         if: always()

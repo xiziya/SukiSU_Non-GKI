@@ -11,7 +11,7 @@ die() { echo "[ERROR] $*" >&2; exit 1; }
 [[ "${BUILD_TARGET:-Image.gz-dtb}" == Image.gz || "${BUILD_TARGET:-Image.gz-dtb}" == Image.gz-dtb ]] || die 'build target must be Image.gz or Image.gz-dtb'
 [[ "${AK3_KERNEL_TARGET:-Image.gz-dtb}" == Image.gz || "${AK3_KERNEL_TARGET:-Image.gz-dtb}" == Image.gz-dtb ]] || die 'AnyKernel3 target must be Image.gz or Image.gz-dtb'
 [[ -z "${BUILD_TIME:-}" || "$BUILD_TIME" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}([T ][0-9]{2}:[0-9]{2}(:[0-9]{2})?(Z|[+-][0-9]{2}:[0-9]{2})?)?$ ]] || die "build time must be ISO-8601"
-for name in SPOOF_KERNEL_VERSION AB_PARTITION DISABLE_LTO_REQUESTED IGNORE_WERROR_REQUESTED FORCE_SELINUX_ENFORCING INTEGRATE_SUSFS INTEGRATE_DROIDSPACES PACKAGE_AK3 APPLY_DEVICE_PATCHES; do case "${!name:-false}" in true|false) ;; *) die "$name must be true or false" ;; esac; done
+for name in ENABLE_PSTORE_DEBUG SPOOF_KERNEL_VERSION AB_PARTITION DISABLE_LTO_REQUESTED IGNORE_WERROR_REQUESTED FORCE_SELINUX_ENFORCING INTEGRATE_SUSFS INTEGRATE_DROIDSPACES PACKAGE_AK3 APPLY_DEVICE_PATCHES; do case "${!name:-false}" in true|false) ;; *) die "$name must be true or false" ;; esac; done
 if [[ "${SPOOF_KERNEL_VERSION:-false}" == true ]]; then
   [[ "${SPOOFED_KERNEL_VERSION:-}" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]] || die 'spoofed kernel version must use numeric major.minor.sublevel format, for example 4.9.337'
 elif [[ -n "${SPOOFED_KERNEL_VERSION:-}" ]]; then
