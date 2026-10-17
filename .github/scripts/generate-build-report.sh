@@ -29,10 +29,12 @@ start=${BUILD_START_EPOCH:-$end}
   echo "- pstore 持久化日志: 请求=${ENABLE_PSTORE_DEBUG:-false}; 配置=${PSTORE_DEBUG_STATUS:-unchanged-or-not-run}"
   if [[ "${ENABLE_PSTORE_DEBUG:-false}" == true ]]; then
     echo "- pstore RAM 后端: ${PSTORE_BACKEND_STATUS:-not-verified}"
-    echo "- ramoops 设备树检测: ${PSTORE_DTS_STATUS:-not-checked}（仅源码候选，不代表设备已启用）"
+    echo "- ramoops DT 源码候选: ${PSTORE_DTS_STATUS:-not-checked}（仅候选，不代表设备已启用）"
+    echo "- pstore 平台预留内存来源: ${PSTORE_PLATFORM_PROVISIONING_STATUS:-not-verified}"
+    echo "- ramoops 启动参数: ${PSTORE_RAMOOPS_CMDLINE_STATUS:-not-verified}"
     echo "- pstore 用户日志: ${PSTORE_PMSG_STATUS:-not-checked}"
     echo "- pstore FTRACE: ${PSTORE_FTRACE_STATUS:-not-checked}（不额外启用函数跟踪）"
-    echo '- pstore 运行状态: 尚未实机验证；依赖设备 DT/DTBO 的保留内存及缓冲区大小，突然断电不保证保存。参见 pstore-debug/README.md。'
+    echo '- pstore 运行状态: 尚未实机验证；依赖设备实际生效的 DT/平台保留 RAM 区和非零缓冲区，突然断电不保证保存。参见 pstore-debug/README.md。'
   fi
   echo "- 集成选择: SukiSU Ultra=是; SUSFS=${INTEGRATE_SUSFS:-false}; DroidSpaces=${INTEGRATE_DROIDSPACES:-false}; 机型专属补丁=${APPLY_DEVICE_PATCHES:-false}; 内核版本伪装=${SPOOF_KERNEL_VERSION:-false}; SELinux固定Enforcing=${FORCE_SELINUX_ENFORCING:-false}; LTO关闭=${DISABLE_LTO_REQUESTED:-false}; Werror降级=${IGNORE_WERROR_REQUESTED:-false}; A/B=${AB_PARTITION:-false}; AK3=${PACKAGE_AK3:-false}"
 
