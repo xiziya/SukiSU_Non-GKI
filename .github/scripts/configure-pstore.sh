@@ -11,6 +11,8 @@ out=${OUT_DIR:-out}
 config="$out/.config"
 backend=unavailable
 symbols=
+ramoops_platform_status=unknown-device-provisioning
+ramoops_cmdline_status=not-checked
 status() {
   if [[ -n "${GITHUB_ENV:-}" ]]; then
     printf '%s=%s\n' "$1" "$2" >> "$GITHUB_ENV"
@@ -33,6 +35,86 @@ set_y() {
   printf 'CONFIG_%s=y\n' "$1" >> "$config"
 }
 config_y() { [[ -f "$config" ]] && grep -qx "CONFIG_$1=y" "$config"; }
+has_polaris_ramoops_source() {
+  local codename=${CODENAME:-}
+  [[ "${codename,,}" == polaris ]] && [[ -f "$root/fs/pstore/ram.c" ]] && \
+    grep -Fq 'early_param("ramoops_memreserve", ramoops_memreserve);' \
+      "$root/fs/pstore/ram.c" && \
+    grep -Fq 'ramoops_data.mem_address = 0xB0000000;' \
+      "$root/fs/pstore/ram.c" && \
+    grep -Fq 'core_initcall(msm_register_ramoops_device);' \
+      "$root/fs/pstore/ram.c"
+}
+select_polaris_ramoops_platform() {
+  has_polaris_ramoops_source || return 1
+  # SDM845 is shared by several phones; only D5X identifies polaris/MIX 2S.
+  has_symbol MACH_XIAOMI_D5X || return 1
+  set_y MACH_XIAOMI_D5X
+  # D5X selects the SDM845 platform Kconfig symbol, but make this dependency
+  # explicit in the generated config before olddefconfig resolves fragments.
+  has_symbol MACH_XIAOMI_SDM845 && set_y MACH_XIAOMI_SDM845
+  config_y MACH_XIAOMI_SDM845
+}
+ensure_polaris_ramoops_cmdline() {
+  local result
+  has_symbol CMDLINE || die symbol-unavailable 'Polaris ramoops source requires CONFIG_CMDLINE support'
+  has_symbol CMDLINE_EXTEND || die symbol-unavailable 'Polaris ramoops requires CONFIG_CMDLINE_EXTEND to preserve bootloader arguments'
+  set_y CMDLINE_EXTEND
+  result=$(python3 - "$config" <<'PY'
+import ast
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+lines = path.read_text().splitlines()
+value = ""
+found = False
+for line in lines:
+    if line.startswith("CONFIG_CMDLINE="):
+        try:
+            value = ast.literal_eval(line.split("=", 1)[1])
+        except (SyntaxError, ValueError) as exc:
+            raise SystemExit(f"Cannot safely parse CONFIG_CMDLINE: {exc}")
+        if not isinstance(value, str):
+            raise SystemExit("CONFIG_CMDLINE is not a string")
+        found = True
+        break
+    if line == "# CONFIG_CMDLINE is not set":
+        found = True
+        break
+if not found:
+    raise SystemExit("CONFIG_CMDLINE is absent from generated .config")
+
+tokens = value.split()
+params = [token for token in tokens if token.startswith("ramoops_memreserve=")]
+if len(params) > 1:
+    raise SystemExit("CONFIG_CMDLINE contains duplicate ramoops_memreserve parameters")
+if params:
+    if not re.fullmatch(r"ramoops_memreserve=[1-9][0-9]*[KMGkmg]?", params[0]):
+        raise SystemExit("CONFIG_CMDLINE contains an invalid ramoops_memreserve value")
+    result = "already-configured"
+else:
+    tokens.append("ramoops_memreserve=4M")
+    value = " ".join(tokens)
+    quoted = '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    replacement = "CONFIG_CMDLINE=" + quoted
+    for index, line in enumerate(lines):
+        if line.startswith("CONFIG_CMDLINE=") or line == "# CONFIG_CMDLINE is not set":
+            lines[index] = replacement
+            break
+    else:
+        raise SystemExit("CONFIG_CMDLINE disappeared while updating .config")
+    path.write_text("\n".join(lines) + "\n")
+    result = "added-4M-platform-default"
+print(result)
+PY
+) || die config-rejected "could not configure the Polaris ramoops command line: $result"
+  ramoops_platform_status=polaris-source-platform-driver
+  ramoops_cmdline_status=$result
+  status PSTORE_PLATFORM_PROVISIONING_STATUS "$ramoops_platform_status"
+  status PSTORE_RAMOOPS_CMDLINE_STATUS "$ramoops_cmdline_status"
+}
 read_symbols
 required=(PRINTK PSTORE PSTORE_CONSOLE)
 [[ "$backend" == unavailable ]] || required+=("$backend")
@@ -47,8 +129,17 @@ if [[ "$mode" == prepare ]]; then
     has_symbol "$key" || die symbol-unavailable "Required pstore symbol CONFIG_$key is not defined"
   done
   for key in "${required[@]}"; do set_y "$key"; done
+  if has_polaris_ramoops_source; then
+    select_polaris_ramoops_platform || die symbol-unavailable 'Polaris ramoops source was detected, but this tree has no MACH_XIAOMI_D5X board selector'
+    ensure_polaris_ramoops_cmdline
+  else
+    ramoops_platform_status=device-dt-or-platform-setup-required
+    ramoops_cmdline_status=not-injected
+    status PSTORE_PLATFORM_PROVISIONING_STATUS "$ramoops_platform_status"
+    status PSTORE_RAMOOPS_CMDLINE_STATUS "$ramoops_cmdline_status"
+  fi
   has_symbol PSTORE_PMSG || echo '[WARNING] This tree lacks PSTORE_PMSG; kernel console/crash logging only' >&2
-  echo "[+] pstore requested with built-in $backend; reserved RAM must come from the device"
+  echo "[+] pstore requested with built-in $backend; platform provisioning: $ramoops_platform_status"
   exit 0
 fi
 
@@ -57,9 +148,43 @@ if [[ "$mode" == verify ]]; then
   for key in "${required[@]}"; do
     config_y "$key" || die config-rejected "Kconfig did not retain CONFIG_$key=y; check dependencies and source support"
   done
+  if has_polaris_ramoops_source; then
+    has_symbol MACH_XIAOMI_D5X && config_y MACH_XIAOMI_D5X || \
+      die config-rejected 'Polaris ramoops source was detected, but Kconfig did not retain the MIX 2S platform symbol'
+    config_y MACH_XIAOMI_SDM845 || die config-rejected 'Polaris ramoops source was detected, but Kconfig did not retain CONFIG_MACH_XIAOMI_SDM845=y'
+    config_y CMDLINE_EXTEND || die config-rejected 'Kconfig did not retain CONFIG_CMDLINE_EXTEND=y for Polaris ramoops'
+    if ! python3 - "$config" <<'PY'
+import ast
+import pathlib
+import re
+import sys
+
+config = pathlib.Path(sys.argv[1]).read_text().splitlines()
+line = next((line for line in config if line.startswith("CONFIG_CMDLINE=")), None)
+if line is None:
+    raise SystemExit(1)
+try:
+    cmdline = ast.literal_eval(line.split("=", 1)[1])
+except (SyntaxError, ValueError):
+    raise SystemExit(1)
+matches = [arg for arg in cmdline.split() if arg.startswith("ramoops_memreserve=")]
+if len(matches) != 1 or not re.fullmatch(r"ramoops_memreserve=[1-9][0-9]*[KMGkmg]?", matches[0]):
+    raise SystemExit(1)
+PY
+    then
+      die config-rejected 'Polaris ramoops source is active but CONFIG_CMDLINE lacks ramoops_memreserve'
+    fi
+    ramoops_platform_status=polaris-source-platform-driver
+    ramoops_cmdline_status=verified
+  else
+    ramoops_platform_status=device-dt-or-platform-setup-required
+    ramoops_cmdline_status=not-injected
+  fi
   status PSTORE_DEBUG_STATUS config-verified
   status PSTORE_BACKEND_STATUS "$backend=builtin"
-  echo '[+] pstore config verified (device runtime/reserved memory not yet verified)'
+  status PSTORE_PLATFORM_PROVISIONING_STATUS "$ramoops_platform_status"
+  status PSTORE_RAMOOPS_CMDLINE_STATUS "$ramoops_cmdline_status"
+  echo "[+] pstore config verified; platform provisioning: $ramoops_platform_status (runtime still needs device verification)"
   exit 0
 fi
 
@@ -114,12 +239,16 @@ status PSTORE_BACKEND_STATUS "$backend_status"
 status PSTORE_DTS_STATUS "$dt_status"
 status PSTORE_PMSG_STATUS "$pmsg_status"
 status PSTORE_FTRACE_STATUS "$ftrace_status"
+status PSTORE_PLATFORM_PROVISIONING_STATUS "${PSTORE_PLATFORM_PROVISIONING_STATUS:-device-dt-or-platform-setup-required}"
+status PSTORE_RAMOOPS_CMDLINE_STATUS "${PSTORE_RAMOOPS_CMDLINE_STATUS:-not-verified}"
 {
-  printf 'Request: true\nConfiguration: %s\nBackend: %s\nDTS: %s\nPMSG: %s\nFTRACE: %s\n' \
-    "${PSTORE_DEBUG_STATUS:-not-verified}" "$backend_status" "$dt_status" "$pmsg_status" "$ftrace_status"
+  printf 'Request: true\nConfiguration: %s\nBackend: %s\nDTS: %s\nPlatform provisioning: %s\nRamoops command line: %s\nPMSG: %s\nFTRACE: %s\n' \
+    "${PSTORE_DEBUG_STATUS:-not-verified}" "$backend_status" "$dt_status" \
+    "${PSTORE_PLATFORM_PROVISIONING_STATUS:-device-dt-or-platform-setup-required}" \
+    "${PSTORE_RAMOOPS_CMDLINE_STATUS:-not-verified}" "$pmsg_status" "$ftrace_status"
   printf '%s\n' \
     'Runtime: UNVERIFIED. Confirm active device DT/DTBO, reserved memory and buffer sizes.' \
-    'Source candidates may belong to OTHER devices or disabled nodes. No physical addresses were changed.' \
+    'Source candidates may belong to OTHER devices or disabled nodes. Generic physical addresses are never injected.' \
     'Console logs wrap; panic/oops records depend on dump policy. Hard power loss may erase RAM.' \
     'No forced panic, watchdog, tracing, thermal or SELinux policy changes were made.'
 } > "$diag/status.txt"

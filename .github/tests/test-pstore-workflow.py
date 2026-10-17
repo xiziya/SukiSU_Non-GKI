@@ -90,6 +90,7 @@ class PstoreTest(unittest.TestCase):
         self.assertIn('请求=true; 配置=config-verified', report)
         self.assertIn('PSTORE_RAM=builtin', report)
         self.assertIn('pstore-debug/kernel.config', report)
+        self.assertIn('pstore 平台预留内存来源', report)
 
     def test_legacy_no_pmsg(self):
         self.fixture(backend='RAMOOPS', pmsg=False)
@@ -101,6 +102,69 @@ class PstoreTest(unittest.TestCase):
         self.run_helper('report')
         self.assertEqual('RAMOOPS=builtin', self.env['PSTORE_BACKEND_STATUS'])
         self.assertEqual('no-source-node-found-check-device-dt', self.env['PSTORE_DTS_STATUS'])
+
+    def test_polaris_platform_cmdline_is_added_and_verified(self):
+        self.fixture()
+        self.env['CODENAME'] = 'polaris'
+        self.config.write_text(self.config.read_text() +
+                               'CONFIG_MACH_XIAOMI_D5X=n\n'
+                               'CONFIG_MACH_XIAOMI_SDM845=n\n'
+                               'CONFIG_CMDLINE="console=ttyMSM0,115200n8"\n')
+        (self.root / 'fs/pstore/ram.c').write_text(
+            'early_param("ramoops_memreserve", ramoops_memreserve);\n'
+            'ramoops_data.mem_address = 0xB0000000;\n'
+            'core_initcall(msm_register_ramoops_device);\n')
+        arm64 = self.root / 'arch/arm64'
+        arm64.mkdir(parents=True)
+        (arm64 / 'Kconfig').write_text('config CMDLINE\nconfig CMDLINE_EXTEND\n'
+                                       'config MACH_XIAOMI_D5X\n'
+                                       'config MACH_XIAOMI_SDM845\n')
+
+        self.run_helper('prepare')
+        configured = self.config.read_text()
+        self.assertIn('CONFIG_CMDLINE="console=ttyMSM0,115200n8 ramoops_memreserve=4M"',
+                      configured)
+        self.assertIn('CONFIG_CMDLINE_EXTEND=y\n', configured)
+        self.assertIn('CONFIG_MACH_XIAOMI_D5X=y\n', configured)
+        self.assertIn('CONFIG_MACH_XIAOMI_SDM845=y\n', configured)
+        self.assertEqual('polaris-source-platform-driver',
+                         self.env['PSTORE_PLATFORM_PROVISIONING_STATUS'])
+        self.assertEqual('added-4M-platform-default', self.env['PSTORE_RAMOOPS_CMDLINE_STATUS'])
+
+        self.run_helper('prepare')
+        self.assertEqual(1, self.config.read_text().count('ramoops_memreserve=4M'))
+        self.run_helper('verify')
+        self.assertEqual('verified', self.env['PSTORE_RAMOOPS_CMDLINE_STATUS'])
+
+    def test_other_codename_does_not_receive_polaris_parameter(self):
+        self.fixture()
+        self.env['CODENAME'] = 'dipper'
+        self.config.write_text(self.config.read_text() + 'CONFIG_MACH_XIAOMI_SDM845=y\n')
+        (self.root / 'fs/pstore/ram.c').write_text(
+            'early_param("ramoops_memreserve", ramoops_memreserve);\n'
+            'ramoops_data.mem_address = 0xB0000000;\n'
+            'core_initcall(msm_register_ramoops_device);\n')
+        self.run_helper('prepare')
+        self.assertNotIn('ramoops_memreserve=', self.config.read_text())
+        self.assertEqual('not-injected', self.env['PSTORE_RAMOOPS_CMDLINE_STATUS'])
+
+    def test_polaris_rejects_shared_sdm845_without_d5x_board_selector(self):
+        self.fixture()
+        self.env['CODENAME'] = 'polaris'
+        self.config.write_text(self.config.read_text() +
+                               'CONFIG_MACH_XIAOMI_SDM845=y\n'
+                               'CONFIG_CMDLINE="console=ttyMSM0"\n')
+        (self.root / 'fs/pstore/ram.c').write_text(
+            'early_param("ramoops_memreserve", ramoops_memreserve);\n'
+            'ramoops_data.mem_address = 0xB0000000;\n'
+            'core_initcall(msm_register_ramoops_device);\n')
+        arm64 = self.root / 'arch/arm64'
+        arm64.mkdir(parents=True)
+        (arm64 / 'Kconfig').write_text('config CMDLINE\nconfig CMDLINE_EXTEND\n'
+                                       'config MACH_XIAOMI_SDM845\n')
+
+        result = self.run_helper('prepare', success=False)
+        self.assertIn('no MACH_XIAOMI_D5X board selector', result.stderr)
 
     def test_missing_backend_does_not_mutate_config(self):
         self.fixture(backend=None)

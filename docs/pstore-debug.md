@@ -8,7 +8,13 @@
 
 这里不依据 `uname` 或伪装版本选择分支，因而适用于有这些能力的 4.4/4.9/4.14/4.19 厂商树以及 5.x/6.x GKI 源码。缺少核心功能或被 `olddefconfig` 因依赖不满足而取消时会停止构建，不能用虚假的配置行宣称启用成功。关闭开关不修改源码原有 pstore 配置，也不是强行禁用 pstore。
 
-日志功能不依赖 SukiSU、SUSFS、DroidSpaces、QCOM 或 MTK。不会强制开启 FTRACE、DEBUG_FS、全局 verbose 日志，不改变 panic-on-oops、panic timeout、watchdog、温控、WLAN、SELinux 或 cmdline。已有 FTRACE 设置保持原状。console 会多一些写入保留 RAM 的开销，不持续写闪存，不安装后台轮询服务。
+日志功能不依赖 SukiSU、SUSFS、DroidSpaces、QCOM 或 MTK。不会强制开启 FTRACE、DEBUG_FS、全局 verbose 日志，不改变 panic-on-oops、panic timeout、watchdog、温控、WLAN 或 SELinux。console 会多一些写入保留 RAM 的开销，不持续写闪存，不安装后台轮询服务。
+
+### Polaris / Xiaomi SDM845 专用路径
+
+当 workflow 机型代码为 `polaris`，且目标源码同时提供并选择 `CONFIG_MACH_XIAOMI_D5X`（该符号再选择 `CONFIG_MACH_XIAOMI_SDM845`）以及该平台自己的 ramoops early-parameter/设备注册代码时，配置脚本会保留原有 `CONFIG_CMDLINE` 内容、启用 `CONFIG_CMDLINE_EXTEND=y`，并在缺失时加入该源码要求的 `ramoops_memreserve=4M`。这是源码明确提供的平台接口，不会改动 `0xB0000000` 地址，也不会向其他机型注入地址或参数。若来源/平台条件未全部满足，则 workflow 只校验 Kconfig，并在报告中标明设备 DT/平台预留内存仍待确认。
+
+114514 的 `hyperos4-thermal-compat` 分支为 Polaris 专用 ramoops 初始化分配了独立 panic/oops record 区，旧布局将整个 4 MiB 都给 console 与 pmsg，实际没有 dmesg dump 区。新布局按总保留区划分 record、console 和 pmsg；仅当内核本来就启用了 `CONFIG_PSTORE_FTRACE` 时才划分 ftrace 区。初始化还会拒绝过小内存范围、验证该物理范围完整落在系统 RAM 内，并在 memblock 保留失败时不注册 ramoops 设备。具体分区和平台注册结果要以启动日志中的 `ramoops` 信息为准。
 
 ## 编译开启不等于设备端已持久化
 

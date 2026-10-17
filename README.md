@@ -72,7 +72,7 @@ Zygisk Next 是用户空间模块，不由 KernelSU 内核驱动实现。上游�
 
 ### 可选 pstore / ramoops 自动日志
 
-中英文运行界面均有“持久化崩溃/关机前日志”开关（`enable_pstore_debug`，默认关闭），示范模板同步提供。开启后按源码 Kconfig 能力启用并核验 PRINTK、PSTORE、CONSOLE、RAM 后端和可用的 PMSG，适配 4.x Non-GKI 及 5.x/6.x GKI 的日志配置，不受伪装版本影响。核心依赖不满足会明确失败；关闭时保持原配置。不会额外开启 FTRACE，也不会改变温控、WLAN、SELinux 或 SukiSU 逻辑。
+中英文运行界面均有“持久化崩溃/关机前日志”开关（`enable_pstore_debug`，默认关闭），示范模板同步提供。开启后按源码 Kconfig 能力启用并核验 PRINTK、PSTORE、CONSOLE、RAM 后端和可用的 PMSG，适配 4.x Non-GKI 及 5.x/6.x GKI 的日志配置，不受伪装版本影响。核心依赖不满足会明确失败；关闭时保持原配置。仅当机型是 polaris 且源码明确提供 Xiaomi SDM845 ramoops 初始化时，工作流才确保平台 Kconfig 和 `ramoops_memreserve=4M`；其他机型不注入设备专属地址或参数。不会额外开启 FTRACE，也不会改变温控、WLAN、SELinux 或 SukiSU 逻辑。
 
 后端正常注册后内核自动将最近 console 消息写入保留 RAM，并按 dump 策略记录 panic/oops；不依赖 ADB 或关机脚本。但必须已有设备正确的 ramoops 保留内存及非零缓冲区。源码节点扫描只列候选，**不会猜测物理地址或自动更改 DT/DTBO**，也不保证突然掉电后保留日志。GKI 仍需匹配工具链、ABI 和 vendor_boot/DTBO，本选项不是完整 GKI 构建支持。
 
